@@ -24,3 +24,9 @@ Agrega una capa de abstracción con metaddatos transaccionales para relacionar l
 4. Veracidad: la celda de diagnóstico de calidad detecta que, de 50.011 transacciones, 11 están duplicadas (mismo transaction_id). Además, la columna `amount` tiene 52 valores "N/A" que no pueden convertirse a numéricos.
 
 5. Valor: el valor de los datos se ve en la capa Gold. Bronze implica solo la carga inicial de los datos, en Silver se limpian y se cruzan según corresponda, para finalmente aplicar métricas en Gold. El valor en Bronze está en la trazabilidad de algunos datos (por ejemplo: con los campos _source, _ingested_at, etc.).
+
+# Desafío
+
+Detectar la evolución de un esquema es una operación de diagnóstico necesaria. Se compara la estreuctura y valores existentes con los nuevos, permitiendo la incorporación de nuevos campos y valores. Es una etapa descriptiva, no implica criterios de decisión.
+Aceptar la evolución garantiza que la integración permita incorporar los cambios entrantes sin comprometer la integridad de los datos. En este caso, el uso de `unionByName` y de `allowMissingColumns=true` admite la ausencia de `app_version` en registros históricos; `dropDuplicates` sobre `event_id` preserva la unicidad de los identificadores.
+Por último, la validez en el negocio implica determinar si, por ejemplo, el evento refund es un comportamiento legítimo de la aplicación o, por el contrario, es una anomalía en el origen entrante. Esto excede el alcance técnico y requiere del criterio de usuarios de negocio, quienes tienen conocimiento del dominio.
