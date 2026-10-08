@@ -387,16 +387,32 @@ WHERE run_n <= 2
 |---|---|---|---|---|---|---|
 |2|true|true|true|true|true|true|
 
+### 11. En `01_ingest_bronze_incremental.ipynb`, ¿qué problema resuelve `COPY INTO` y qué información utiliza para evitar cargar dos veces el mismo archivo físico?
 
+`COPY INTO` carga los archivos de la carpeta a la tabla delta sin reprocesar los ya cargados.
+Si se reejecuta o si llegan nuevos batches, no es necesario llevar un control manual de lo que ya se procesó.
 
+Los duplicados se evitan a partir del log en la tabla destino de la ruta de cada archivo ingestado.
+En cada run, la cláusula `COPY INTO` compara los archivos de la carpeta con ese registro y carga los faltantes.
+
+Como la deduplicación es por nombre de archivo y no por contenido, si un archivo se sobreescribe conservando su ruta,
+los cambios no se impactarán en la base.
+
+### 12. ¿Por qué la vista `bronze_transactions_all` usa `UNION ALL` en lugar de eliminar duplicados? ¿En qué capa se resuelven los duplicados de negocio y por qué?
+
+Porque `bronze` es una capa cruda e inmutable. Por definición, tiene que conservar todos los registros tal cual llegaron y
+manteniendo el lote de origen para tener trazabilidad, poder auditrar y reprocesar.
+
+Los duplicados se resuelven en la capa `silver`, donde se sanitizan los datos en general y hay aplicaciones básicas de reglas
+de negocio, como la aplicación del `transacion_id` como clave. El resto de las reglas de negocio y agregaciones se aplican en la capa `gold`.
 
 
 # PENDIENTES
 
 ### Interpretación del código y del pipeline
 
-11. En `01_ingest_bronze_incremental.ipynb`, ¿qué problema resuelve `COPY INTO` y qué información utiliza para evitar cargar dos veces el mismo archivo físico?
-12. ¿Por qué la vista `bronze_transactions_all` usa `UNION ALL` en lugar de eliminar duplicados? ¿En qué capa se resuelven los duplicados de negocio y por qué?
+
+
 13. ¿Por qué las transacciones iniciales reciben `source_batch_id='initial'` y usan `event_ts` como `updated_at`? ¿Cómo afecta eso a la corrección de la transacción `42`?
 14. En `quality_rules.py`, ¿qué ventaja ofrece `try_cast` frente a un `cast` convencional cuando llega un importe como `N/A`?
 15. Las reglas de calidad asignan una única `quality_reason`. ¿Qué sucede si un registro viola más de una regla y por qué importa el orden de las condiciones?
