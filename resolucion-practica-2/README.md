@@ -406,18 +406,42 @@ manteniendo el lote de origen para tener trazabilidad, poder auditrar y reproces
 Los duplicados se resuelven en la capa `silver`, donde se sanitizan los datos en general y hay aplicaciones básicas de reglas
 de negocio, como la aplicación del `transacion_id` como clave. El resto de las reglas de negocio y agregaciones se aplican en la capa `gold`.
 
+### 13. ¿Por qué las transacciones iniciales reciben `source_batch_id='initial'` y usan `event_ts` como `updated_at`? ¿Cómo afecta eso a la corrección de la transacción `42`?
 
-# PENDIENTES
+El notebook de la práctica 1 no contemplaba la inserción de `source_batch_id` ni de `updated_at`, por lo que en este job se completan con
+`initial` y `event_ts` respectivamente para identificar que vienen de una carga previa y que no queden como nulos.
+Sobre la trx 42, la versión inicial quedó con `updated_at=event_ts`, mientras que las correcciones en el batch 2 y 3 tienen el TS correspondiente. Como silver ordena por `updated_at`, se prioriza la última versión procesada.
 
-### Interpretación del código y del pipeline
+### 14. En `quality_rules.py`, ¿qué ventaja ofrece `try_cast` frente a un `cast` convencional cuando llega un importe como `N/A`?
 
+`try_cast` atrapa excepciones que puedan surgir al tratar de convertir un tipo incorrecto. Por ejemplo: si se castea la columna `amount`, que tiene valores 'N/A', daría error y todo el proceso fallaría por pocos valores. Si se usa `try_cast` en su lugar, la fila "N/A' queda como `NULL` y el resto se procesa sin interrupciones. Finalmente, al ver `amount=NULL` la regla de calidad insertaría `INVALID_AMOUNT` y la fila queda en cuarentena con su valor original.
 
+### 15. Las reglas de calidad asignan una única `quality_reason`. ¿Qué sucede si un registro viola más de una regla y por qué importa el orden de las condiciones?
 
-13. ¿Por qué las transacciones iniciales reciben `source_batch_id='initial'` y usan `event_ts` como `updated_at`? ¿Cómo afecta eso a la corrección de la transacción `42`?
-14. En `quality_rules.py`, ¿qué ventaja ofrece `try_cast` frente a un `cast` convencional cuando llega un importe como `N/A`?
-15. Las reglas de calidad asignan una única `quality_reason`. ¿Qué sucede si un registro viola más de una regla y por qué importa el orden de las condiciones?
-16. Explicá cómo se construye `_record_key` y cómo se usa junto con `row_number`. ¿Qué caso cubre el hash cuando `transaction_id` no puede convertirse a un número?
-17. Interpretá las dos cláusulas principales del `MERGE` de `silver_transactions`. ¿Cuándo se actualiza una fila existente y cuándo se inserta una nueva?
-18. ¿Por qué las tablas Gold se reconstruyen completamente en esta práctica mientras Silver se actualiza con `MERGE`? Mencioná una ventaja y una limitación de cada estrategia.
-19. ¿Por qué `expected_batch_id` no participa en la detección del archivo nuevo? Indicá qué parte del pipeline descubre `batch_003` y qué parte utiliza el parámetro.
-20. Si la tarea `build_silver` falla, ¿qué ocurre con `build_gold` y `validate` en el Job? Explicá cómo las dependencias del DAG evitan publicar o validar resultados incompletos.
+Al utilizar la cláusula `when`, las reglas se evalúan en orden y se asigna como `quality_reason` la primera que se cumple.
+De la misma manera, si un registro tiene más de un error, solo se loggea el primero. Si no están ordenados, cambia lo que se informa y los conteos en cuarentena.
+
+### 16. Explicá cómo se construye `_record_key` y cómo se usa junto con `row_number`. ¿Qué caso cubre el hash cuando `transaction_id` no puede convertirse a un número?
+
+`record_key` es el transaction_id casteado a número. De no ser posible, se hace un sha de todas las columnas de la fila para la key, de modo que no haya nulos en la columna. Luego, `row_number` agrupa por esa key, ordena por `updated_at` descendiente y se queda con la primera fila.
+
+De no aplicar el hash, todas las filas con key nula quedarían en un mismo grupo y se perderían datos. El hash permite que se le asigne el tipo `invalid_transaction` y se mande a cuarentena.
+
+### 17. Interpretá las dos cláusulas principales del `MERGE` de `silver_transactions`. ¿Cuándo se actualiza una fila existente y cuándo se inserta una nueva?
+
+El `merge` se hace por `transaction_id`. Si la trx existe y la entrante tiene un `updated_at` más reciente, se actualiza la fila entera, si el TS es anterior, se ignora, y si la trx no existe en la tabla, se hace el insert.
+
+### 18. ¿Por qué las tablas Gold se reconstruyen completamente en esta práctica mientras Silver se actualiza con `MERGE`? Mencioná una ventaja y una limitación de cada estrategia.
+
+`Gold` contiene agregaciones y reglas de negocio. Recalcularlas luego de cada inserción o modificación es complejo y en ocasiones imposible. Reconstruir la tabla asegura consistencia, pero aumenta los tiempos de ejecución.
+
+`Silver` en cambio no necesita recalcular nada dado que solo hace limpieza de datos. El merge reduce tiempos de ejecución a comparación, pero es compleja la identificación de una key confiable y requiere de un TS para validar cuáles son los datos más recientes.
+
+### 19. ¿Por qué `expected_batch_id` no participa en la detección del archivo nuevo? Indicá qué parte del pipeline descubre `batch_003` y qué parte utiliza el parámetro.
+
+`expected_batch_id` se utiliza para la validación del job/datos: que haya llegado a bronze, que tiene filas en cuarentena, si aparece en gold_summary, etc. Si este valor se usara durante la ingesta, requeriria actualizarlo antes de cada corrida porque, caso contrario, podrían quedar archivos sin procesar.
+
+### 20. Si la tarea `build_silver` falla, ¿qué ocurre con `build_gold` y `validate` en el Job? Explicá cómo las dependencias del DAG evitan publicar o validar resultados incompletos.
+
+Todas las tareas están encadenadas y dependen de la ejecución exitosa de la tarea inmediatamente anterior para correr. Si falla `build_silver`, ni `build_gold` ni `validate` se ejecutarían y todo el job se marcaría como error. Este encadenamiento permite que no lleguen a producción datos erróneos o corruptos: las tablas gold permanecen con la última versión buena y/o funcional.
+Como el pipeline es idempotente, basta con arreglar el error y reejecutar.
